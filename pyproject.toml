@@ -1,7 +1,29 @@
 [project]
-name = "kompendeum"
-version = "0.1.0"
-description = "Add your description here"
+name = "totemengine"
+version = "0.2.0"
+description = "AI-powered research assistant — decompose, search, crawl, summarize, synthesize"
 readme = "README.md"
-requires-python = ">=3.13"
-dependencies = []
+requires-python = ">=3.11.9"
+license = { text = "MIT" }
+keywords = ["langchain", "langgraph", "research", "ai", "web-scraping", "mistral", "groq"]
+dependencies = [
+    "langchain>=0.3.0",
+    "langchain-core>=0.3.0",
+    "langgraph>=0.3.0",
+    "langchain-mistralai>=0.2.0",
+    "langchain-groq>=0.2.0",
+    "duckduckgo-search>=8.1.1",
+    "beautifulsoup4>=4.13.4",
+    "requests>=2.32.5",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/totemengine"
+Repository = "https://github.com/yourusername/totemengine"
+Documentation = "https://github.com/yourusername/totemengine#readme"
+
+[project.scripts]
+totem = "totem.cli:main"
