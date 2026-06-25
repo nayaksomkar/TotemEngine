@@ -1,3 +1,12 @@
+# ---------------------------------------------------------------------------
+# CLI — Command-line interface using argparse.
+#
+# Subcommands:
+#   research   Run a research query and print the report
+#   models     List all available LLM providers
+#   server     Start the FastAPI REST server
+# ---------------------------------------------------------------------------
+
 import argparse
 import sys
 import logging
@@ -6,53 +15,74 @@ from totem.config import SUPPORTED_MODELS
 from totem.graph import run_research
 from totem.server import app
 
+# Quiet the verbose library loggers
+logging.getLogger("langchain").setLevel(logging.WARNING)
+logging.getLogger("langgraph").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+
+# Clean step-level logging for the user (stdout to match print() ordering)
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%H:%M:%S",
+    format="%(message)s",
+    stream=sys.stdout,
 )
 logger = logging.getLogger("totem")
 
 
-def print_header():
-    print("=" * 60)
-    print("  TotemEngine — AI-Powered Research Assistant")
-    print("=" * 60)
-    print()
+def print_line(char="="):
+    """Print a separator line."""
+    print(char * 60)
 
 
 def do_research(args):
-    print_header()
-    logger.info(f"Query: {args.query}")
-    logger.info(f"Model: {SUPPORTED_MODELS.get(args.model, {}).get('display', args.model)}")
+    """Handle the 'research' subcommand: run pipeline and print report."""
+    print_line()
+    print("  TotemEngine — AI Research Assistant")
+    print_line()
+    print(f"  Query: {args.query}")
+    print(f"  Model: {SUPPORTED_MODELS.get(args.model, {}).get('display', args.model)}")
     print()
 
     result = run_research(args.query, args.model)
 
-    print("\n" + "=" * 60)
-    print("  SUB-QUERIES")
-    print("=" * 60)
+    # Sub-queries
+    print_line()
+    print("  TOPICS TO RESEARCH")
+    print_line()
     for i, sq in enumerate(result.get("sub_queries", []), 1):
         print(f"  {i}. {sq}")
 
-    print("\n" + "=" * 60)
-    print("  INDIVIDUAL SUMMARIES")
-    print("=" * 60)
+    # Sources crawled
+    print_line()
+    print("  SOURCES ANALYZED")
+    print_line()
+    for i, cc in enumerate(result.get("crawled_contents", []), 1):
+        print(f"  {i}. {cc['url']}")
+
+    # Individual summaries
+    print_line()
+    print("  KEY FINDINGS PER SOURCE")
+    print_line()
     for i, s in enumerate(result.get("summaries", []), 1):
-        print(f"\n  [{i}]")
-        for line in s.strip().split("\n"):
+        first_line = s.strip().split("\n")[0] if s.strip() else ""
+        print(f"\n  [{i}] {first_line.replace('**Source:** ','')}")
+        for line in s.strip().split("\n")[1:]:
             print(f"     {line}")
 
-    print("\n" + "=" * 60)
-    print("  FINAL SYNTHESIS")
-    print("=" * 60)
+    # Final report
+    print_line()
+    print("  SYNTHESIS")
+    print_line()
     print()
     print(result.get("final_summary", "No result generated."))
     print()
 
 
 def list_models(_):
-    print_header()
+    """Handle the 'models' subcommand: print all supported providers."""
+    print_line()
     print("  Available models:\n")
     for name, info in SUPPORTED_MODELS.items():
         print(f"    {name:12s}  {info['display']}")
@@ -60,17 +90,20 @@ def list_models(_):
 
 
 def start_server(args):
+    """Handle the 'server' subcommand: launch Uvicorn + FastAPI."""
     import uvicorn
     logger.info(f"Starting server on {args.host}:{args.port}")
     uvicorn.run(app, host=args.host, port=args.port)
 
 
 def main():
+    """Entry point: parse CLI args and dispatch to the right handler."""
     parser = argparse.ArgumentParser(
-        description="TotemEngine — AI-powered research assistant"
+        description="TotemEngine \u2014 AI-powered research assistant"
     )
     sub = parser.add_subparsers(dest="command", help="Available commands")
 
+    # --- research subcommand ---
     p_research = sub.add_parser("research", help="Run a research query")
     p_research.add_argument("query", help="Your research question")
     p_research.add_argument(
@@ -80,12 +113,15 @@ def main():
         help="AI model to use (default: mistral)",
     )
 
+    # --- models subcommand ---
     p_models = sub.add_parser("models", help="List available models")
 
+    # --- server subcommand ---
     p_server = sub.add_parser("server", help="Start the API server")
     p_server.add_argument("--host", default="0.0.0.0", help="Bind address")
     p_server.add_argument("--port", "-p", type=int, default=8000, help="Port")
 
+    # Parse and dispatch
     args = parser.parse_args()
     if args.command == "research":
         do_research(args)

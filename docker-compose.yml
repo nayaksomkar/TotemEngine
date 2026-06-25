@@ -1,27 +1,18 @@
-# Docker Compose config for crawl4ai
-# Starts the crawl4ai API server with a mounted scripts directory.
 services:
-  crawl4ai:
-    # Official crawl4ai Docker image (includes FastAPI server + Playwright browser)
-    image: unclecode/crawl4ai:latest
+  totem:
+    build: .
+    image: totemengine
+    environment:
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+
+  server:
+    image: totemengine
     ports:
-      # Host:Container  — send requests to http://localhost:11235
-      - "11235:11235"
-    volumes:
-      # Shared memory for Chromium browser performance
-      - /dev/shm:/dev/shm
-      # Mount your local scripts/ directory into the container at /scripts
-      - ./scripts:/scripts
-    deploy:
-      resources:
-        limits:
-          memory: 4G
-        reservations:
-          memory: 1G
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11235/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+      - "8000:8000"
+    environment:
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    command: ["server", "--host", "0.0.0.0", "--port", "8000"]
