@@ -2,22 +2,25 @@
 # FastAPI Server — REST API for the research pipeline.
 #
 # Endpoints:
-#   GET  /health         Health check
-#   GET  /models         List available LLM providers
-#   POST /research       Start async research (returns task_id)
-#   GET  /research/{id}  Poll async task result
-#   POST /research/sync  Run research synchronously (blocking)
+#   GET  /health              Health check
+#   GET  /models              List available LLM providers
+#   POST /research            Start async research (returns task_id)
+#   GET  /research/{id}       Poll async task result
+#   POST /research/sync       Run research synchronously (blocking)
+#   POST /research/stream     Run research with SSE progress events
 # ---------------------------------------------------------------------------
 
+import json
 import logging
 import uuid
 from threading import Thread
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from totem.graph import run_research
+from totem.graph import run_research, run_research_stream
 from totem.config import SUPPORTED_MODELS
 
 logger = logging.getLogger(__name__)
@@ -139,7 +142,67 @@ def research_sync(req: ResearchRequest):
             "summaries": result["summaries"],
             "final_summary": result["final_summary"],
             "model_choice": result["model_choice"],
+            "sources": [
+                {"title": r["title"], "url": r["url"]}
+                for r in result.get("search_results", [])
+            ],
         }
     except Exception as e:
         logger.exception("Sync research failed")
         raise HTTPException(500, str(e))
+
+
+NODE_LABELS = {
+    "decompose": "Breaking down your question into research topics...",
+    "search": "Searching the web for relevant sources...",
+    "crawl": "Fetching page content from sources...",
+    "summarize": "Summarizing each source...",
+    "merge": "Synthesizing the final research report...",
+    "result": "Research complete!",
+}
+
+
+@app.post("/research/stream")
+def research_stream(req: ResearchRequest):
+    """
+    Run research and stream progress events via Server-Sent Events (SSE).
+
+    Each event is a JSON string following the ``data:`` SSE format:
+      - ``{"type":"progress","node":"decompose","message":"..."}``
+      - ``{"type":"result","status":"completed",...}``
+      - ``{"type":"error","message":"..."}``
+    """
+
+    def event_stream():
+        try:
+            for node_name, state in run_research_stream(req.query, req.model):
+                if node_name == "result":
+                    result = {
+                        "type": "result",
+                        "status": "completed",
+                        "query": state["query"],
+                        "sub_queries": state["sub_queries"],
+                        "summaries": state["summaries"],
+                        "final_summary": state["final_summary"],
+                        "model_choice": state["model_choice"],
+                        "sources": [
+                            {"title": r["title"], "url": r["url"]}
+                            for r in state.get("search_results", [])
+                        ],
+                    }
+                    yield f"data: {json.dumps(result)}\n\n"
+                else:
+                    progress = {
+                        "type": "progress",
+                        "node": node_name,
+                        "message": NODE_LABELS.get(
+                            node_name, f"Running {node_name}..."
+                        ),
+                    }
+                    yield f"data: {json.dumps(progress)}\n\n"
+        except Exception as e:
+            logger.exception("Stream research failed")
+            error = {"type": "error", "message": str(e)}
+            yield f"data: {json.dumps(error)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")

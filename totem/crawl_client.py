@@ -1,66 +1,40 @@
-# ---------------------------------------------------------------------------
-# Playwright Web Scraper
-#
-# Fetches full page content using Playwright (headless Chromium).
-# Handles JavaScript-heavy sites (React, Next.js, etc.).
-#
-# Usage:
-#   from totem.crawl_client import crawl
-#   results = crawl(["https://example.com"])
-#
-# First-time setup:
-#   pip install playwright
-#   playwright install chromium
-# ---------------------------------------------------------------------------
-
+import asyncio
 import logging
 import re
+import threading
 
 logger = logging.getLogger(__name__)
 
-# Lazy browser instance shared across calls
 _browser = None
+_playwright = None
+_loop = asyncio.new_event_loop()
+_thread = threading.Thread(target=_loop.run_forever, daemon=True)
+_thread.start()
 
 
-def _get_browser():
-    """Launch or return the shared headless Chromium instance."""
-    global _browser
+def _run_async(coro):
+    return asyncio.run_coroutine_threadsafe(coro, _loop).result()
+
+
+async def _get_browser():
+    global _browser, _playwright
     if _browser is None:
-        from playwright.sync_api import sync_playwright
-        p = sync_playwright().start()
-        _browser = p.chromium.launch(headless=True)
+        from playwright.async_api import async_playwright
+        _playwright = await async_playwright().start()
+        _browser = await _playwright.chromium.launch(headless=True)
     return _browser
 
 
 def _clean_text(html: str) -> str:
-    """Strip tags, scripts, and collapse whitespace into plain text."""
-    # Remove script and style blocks
     html = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL)
     html = re.sub(r"<style[^>]*>.*?</style>", "", html, flags=re.DOTALL)
-    # Remove all tags
     text = re.sub(r"<[^>]+>", " ", html)
-    # Collapse whitespace
     text = re.sub(r"\s+", " ", text).strip()
     return text[:8000]
 
 
-def crawl(
-    urls: list[str],
-    *,
-    target: int = 3,
-) -> list[dict]:
-    """
-    Fetch page content using Playwright, stopping after *target* successful
-    fetches.  URLs beyond the first batch are tried when earlier ones fail.
-
-    Args:
-        urls:   List of URLs to scrape (ordered by priority).
-        target: Stop after this many successful pages (default 3).
-
-    Returns:
-        A list of dicts: [{"url": str, "content": str}, ...]
-    """
-    browser = _get_browser()
+async def _crawl(urls: list[str], target: int = 3) -> list[dict]:
+    browser = await _get_browser()
     results = []
 
     for url in urls:
@@ -68,9 +42,9 @@ def crawl(
             break
         page = None
         try:
-            page = browser.new_page()
-            page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            html = page.content()
+            page = await browser.new_page()
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            html = await page.content()
             text = _clean_text(html)
             if text:
                 results.append({"url": url, "content": text})
@@ -79,14 +53,24 @@ def crawl(
             logger.warning(f"  Failed to fetch {url}: {e}")
         finally:
             if page:
-                page.close()
+                await page.close()
 
     return results
 
 
-def close():
-    """Close the shared browser instance (call on shutdown)."""
-    global _browser
+def crawl(urls: list[str], target: int = 3) -> list[dict]:
+    return _run_async(_crawl(urls, target=target))
+
+
+async def _close():
+    global _browser, _playwright
     if _browser:
-        _browser.close()
+        await _browser.close()
         _browser = None
+    if _playwright:
+        await _playwright.stop()
+        _playwright = None
+
+
+def close():
+    _run_async(_close())

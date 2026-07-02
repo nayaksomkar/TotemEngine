@@ -55,6 +55,19 @@ def build_research_graph() -> StateGraph:
     return graph.compile()
 
 
+def _build_initial_state(query: str, model_choice: str = "mistral") -> ResearchState:
+    return {
+        "query": query,
+        "sub_queries": [],
+        "search_results": [],
+        "crawled_contents": [],
+        "summaries": [],
+        "final_summary": "",
+        "model_choice": model_choice,
+        "error": None,
+    }
+
+
 def run_research(query: str, model_choice: str = "mistral") -> ResearchState:
     """
     Convenience wrapper: build the graph, create initial state, and invoke.
@@ -68,21 +81,31 @@ def run_research(query: str, model_choice: str = "mistral") -> ResearchState:
         the final_summary.
     """
     graph = build_research_graph()
-
-    # Initialise state with empty lists — each node fills its section
-    initial_state: ResearchState = {
-        "query": query,
-        "sub_queries": [],
-        "search_results": [],
-        "crawled_contents": [],
-        "summaries": [],
-        "final_summary": "",
-        "model_choice": model_choice,
-        "error": None,
-    }
+    initial_state = _build_initial_state(query, model_choice)
 
     try:
         result = graph.invoke(initial_state)
         return result
     finally:
         close_browser()
+
+
+def run_research_stream(query: str, model_choice: str = "mistral"):
+    """
+    Run the research pipeline and yield (node_name, state_update) for each
+    completed node.  The caller receives progress updates in real time.
+    """
+    graph = build_research_graph()
+    initial_state = _build_initial_state(query, model_choice)
+    final_state = None
+
+    accumulated = dict(initial_state)
+    try:
+        for event in graph.stream(initial_state, stream_mode="updates"):
+            for node_name, state_update in event.items():
+                accumulated.update(state_update)
+                yield node_name, state_update
+    finally:
+        close_browser()
+
+    yield "result", accumulated
