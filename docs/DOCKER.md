@@ -1,161 +1,133 @@
-# Docker Deployment Guide
+# Docker & Render Deployment
 
-## Overview
+WebHunter runs entirely inside Docker. You do **not** need Python, Playwright, or Chromium installed on the host machine — everything is packaged into a single container image.
 
-TotemEngine runs entirely inside Docker. You do **not** need Python, Playwright, or Chromium installed on your host machine — everything is packaged into a single container image.
-
-> **Docker-only deployment.** This guide covers running the project exclusively via Docker.  
-> For local (non-Docker) development, see [CONTRIBUTING.md](../CONTRIBUTING.md).
+> **Docker-first deployment.** This guide covers local Docker, plain `docker run`, and Render.
 
 ---
 
 ## Prerequisites
 
-- **Docker Engine** 24.0+ or **Docker Desktop**
-- **Docker Compose** plugin (included with Docker Desktop)
-- API key from [Mistral AI](https://console.mistral.ai/) or [Groq](https://console.groq.com/)
+- **Docker Engine** 24.0+ or **Docker Desktop** with Compose plugin
 
 > No Python runtime, virtual environment, or browser required on the host.
 
 ---
 
-## Quick Start
+## Local: Quick Start
 
-### 1. Clone the repo
+### 1. Clone
 
 ```bash
-git clone https://github.com/nayaksomkar/TotemEngine.git
-cd TotemEngine
+git clone https://github.com/nayaksomkar/WebHunter.git
+cd WebHunter
 ```
 
-### 2. Configure environment variables
+### 2. (Optional) Configure environment
 
 ```bash
 cp .env.example .env
+nano .env   # adjust PORT, MAX_PAGES, etc. if needed
 ```
 
-Edit `.env` and add at least one API key:
+Defaults work for most cases.
 
-```bash
-MISTRAL_API_KEY=your-mistral-key-here
-GROQ_API_KEY=your-groq-key-here
-LOG_LEVEL=INFO
-```
-
-> **Where to change `.env`** — the file lives at the project root. Docker Compose reads it automatically.  
-> **What to change** — at least one of `MISTRAL_API_KEY` or `GROQ_API_KEY`.
-
-### 3. Build the image
+### 3. Build
 
 ```bash
 docker compose build
 ```
 
 This runs:
-1. `pip install --no-cache-dir -e .` — installs all Python dependencies
+1. `pip install -e .` — installs all Python dependencies
 2. `python -m playwright install chromium` — downloads the Chromium binary into the image
 
 ### 4. Run
-
-**One-shot CLI query:**
-
-```bash
-docker compose run --rm cli research "How does quantum computing work?" --model mistral
-```
-
-**Start the API server:**
 
 ```bash
 docker compose up server
 ```
 
+The server listens on `http://localhost:8000` (or whatever `$PORT` is).
+
+```bash
+curl http://localhost:8000/health
+# → {"status":"ok"}
+```
+
 ---
 
-## Docker Compose Services
+## Plain Docker (without Compose)
+
+```bash
+# Build
+docker build -t webhunter .
+
+# Run
+docker run --rm -p 8000:8000 -e PORT=8000 webhunter
+```
+
+---
+
+## Docker Compose Reference
 
 Defined in [`docker-compose.yml`](../docker-compose.yml):
 
 | Service | Purpose | Ports | Image |
 |---------|---------|-------|-------|
-| `totem` | Research CLI — runs one-off queries | none | `totemengine` |
-| `server` | FastAPI REST API server | `8000:8000` | `totemengine` |
+| `server` | FastAPI REST API server | `${PORT:-8000}:${PORT:-8000}` | `webhunter` |
 
-Both services share the same built image (`totemengine`).
-
----
-
-## CLI Reference (Docker)
-
-Run via the `cli` service:
-
-```bash
-# Research a query
-docker compose run --rm cli research "your query" --model mistral
-
-# List available models
-docker compose run --rm cli models
-
-# Start server (use 'up' instead of 'run')
-docker compose up server
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--model` / `-m` | `mistral` | AI provider: `mistral` or `groq` |
+The service honors every environment variable from [`.env.example`](../.env.example).
 
 ---
 
-## REST API Reference (Docker)
+## Render Deployment
 
-Start the server:
+Render is the recommended host for this service.
+
+### One-time setup
+
+1. Push this repository to GitHub or GitLab.
+2. On Render, click **New → Web Service**.
+3. Select the repo. Render auto-detects the `Dockerfile` — no build command override needed.
+4. Configure:
+   - **Environment:** `Docker`
+   - **Region:** pick one close to your other microservices
+   - **Instance Type:** `Starter` or higher (Chromium needs ~512MB RAM minimum)
+   - **Health Check Path:** `/health`
+5. No environment variables are required. Add them only if you want to override defaults.
+
+### What happens on deploy
+
+- Render sets `$PORT` automatically (usually `10000`).
+- WebHunter reads it via `totem.config.PORT` and binds Uvicorn accordingly.
+- Health checks pass once `GET /health` returns `{"status":"ok"}`.
+- First deploy takes **2–3 minutes** (Chromium download + install). Subsequent deploys reuse cached layers and are typically <30s.
+
+### Verifying a Render deployment
 
 ```bash
-docker compose up server
-```
+curl https://<your-service>.onrender.com/health
+# → {"status":"ok"}
 
-### Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/health` | Health check |
-| `GET` | `/models` | List available models |
-| `POST` | `/research` | Start async research (returns `task_id`) |
-| `GET` | `/research/{task_id}` | Poll async result |
-| `POST` | `/research/sync` | Run research synchronously (blocks) |
-
-### Example: Sync research
-
-```bash
-curl -X POST http://localhost:8000/research/sync \
+curl -X POST https://<your-service>.onrender.com/research/sync \
   -H "Content-Type: application/json" \
-  -d '{"query": "Your question", "model": "mistral"}'
-```
-
-### Example: Async research
-
-```bash
-# Start task
-TASK=$(curl -s -X POST http://localhost:8000/research \
-  -H "Content-Type: application/json" \
-  -d '{"query": "Your question"}' | jq -r .task_id)
-
-# Poll for result
-curl http://localhost:8000/research/$TASK
+  -d '{"query":"EV market 2025","max_pages":2,"variants":["pricing"]}'
 ```
 
 ---
 
 ## What's Inside the Image
 
-The Dockerfile [`Dockerfile`](../Dockerfile) builds a self-contained image:
+The [`Dockerfile`](../Dockerfile) builds a self-contained image:
 
 | Layer | Details |
 |-------|---------|
 | Base | `python:3.12-slim` |
 | System deps | `wget`, `ca-certificates` (required by Chromium) |
-| Python deps | `pip install -e .` → installs `totem`, `playwright`, `langchain`, `fastapi`, etc. |
+| Python deps | `pip install -e .` → installs `fastapi`, `uvicorn`, `pydantic`, `ddgs`, `playwright`, `python-dotenv` |
 | Browser | `playwright install chromium` → Chromium binary baked into the image |
-| Entrypoint | `python main.py` |
+| Entrypoint | `CMD ["server"]` — Uvicorn runs on `0.0.0.0:$PORT` |
 
 **What you do NOT need on the host:**
 
@@ -163,6 +135,7 @@ The Dockerfile [`Dockerfile`](../Dockerfile) builds a self-contained image:
 - Playwright browsers
 - Chromium or any GUI libraries
 - Any Node.js or frontend tooling
+- Any API keys (there are none — WebHunter has no LLM provider)
 
 ---
 
@@ -170,75 +143,63 @@ The Dockerfile [`Dockerfile`](../Dockerfile) builds a self-contained image:
 
 All configuration is via environment variables. Docker Compose reads them from `.env`.
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `MISTRAL_API_KEY` | For `mistral` model | — | Mistral AI API key |
-| `GROQ_API_KEY` | For `groq` model | — | Groq API key |
-| `LOG_LEVEL` | No | `INFO` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`) |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `8000` | Server bind port (Render sets automatically) |
+| `HOST` | `0.0.0.0` | Server bind host |
+| `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `MAX_RESULTS` | `6` | Max URLs collected per research request |
+| `MAX_PAGES` | `3` | Max pages crawled per research request |
+| `PAGE_TIMEOUT_MS` | `30000` | Per-page Playwright navigation timeout |
+| `CONTENT_MAX_CHARS` | `8000` | Cap on extracted text per page |
+| `SEARCH_VARIANTS` | _empty_ | Comma-separated extra query suffixes applied to every request |
 
-See [CONFIGURATION.md](CONFIGURATION.md) for details.
+See [CONFIGURATION.md](CONFIGURATION.md) for the full reference.
 
 ---
 
 ## Troubleshooting
 
-### Build fails with playwright install errors
+### Build fails during `playwright install chromium`
 
-The `playwright install chromium` step downloads ~300MB. Ensure:
-- Sufficient disk space (500MB+ free)
+The step downloads ~300MB. Ensure:
+- Sufficient disk space (500MB+ free on the build machine)
 - Network access to `playwright.azureedge.net`
 
 ### Container exits immediately
 
 Check logs:
 ```bash
-docker compose run --rm cli research "test" --model mistral
+docker compose logs server
 ```
 
-For server:
-```bash
-docker compose up server
-```
+Common causes:
+- Port collision (change `PORT` in `.env`)
+- Missing `CMD` argument (ensure your image inherits `CMD ["server"]` from the Dockerfile)
 
 ### API returns 500
 
-Verify your API key is set in `.env` and the container was rebuilt after changes:
-
+Check container logs:
 ```bash
-docker compose build
-docker compose up server
+docker compose logs -f server
 ```
 
-### Port 8000 already in use
+Possible causes:
+- DuckDuckGo rate-limit (will be visible as `Search failed for '...'` warnings; pipeline continues)
+- All crawl targets unreachable from the container's network
 
-Change the port mapping in `docker-compose.yml`:
-```yaml
-services:
-  server:
-    ports:
-      - "9000:8000"   # map host:container
-```
+### Playwright fails to launch Chromium
 
----
-
-## Advanced: Build Only (No Compose)
-
+If you see `BrowserType.launch: Executable doesn't exist`, the image wasn't built with `playwright install chromium`. Rebuild:
 ```bash
-# Build image manually
-docker build -t totemengine .
-
-# Run CLI query
-docker run --rm -e MISTRAL_API_KEY=xxx totemengine research "query"
-
-# Run server on port 8000
-docker run --rm -p 8000:8000 -e MISTRAL_API_KEY=xxx totemengine server
+docker compose build --no-cache
 ```
 
 ---
 
 ## Related
 
-- [README.md](../README.md) — Project overview and features
-- [CONFIGURATION.md](CONFIGURATION.md) — Detailed environment setup
-- [ARCHITECTURE.md](ARCHITECTURE.md) — Pipeline internals
-- [CONTRIBUTING.md](../CONTRIBUTING.md) — Local development setup
+- [README.md](../README.md) — Project overview
+- [API.md](API.md) — REST API reference
+- [CONFIGURATION.md](CONFIGURATION.md) — Environment variables
+- [ARCHITECTURE.md](ARCHITECTURE.md) — Internals

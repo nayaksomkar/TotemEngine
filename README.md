@@ -1,16 +1,15 @@
 <div align="center">
 
-# TotemEngine
+# WebHunter
 
-**AI-powered research assistant** — decompose, search, crawl, summarize, synthesize.
+**Standalone web search + crawling microservice** — DuckDuckGo for discovery, Playwright for page content.
 
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue?logo=python&logoColor=white)](https://python.org)
-[![LangGraph](https://img.shields.io/badge/langgraph-%F0%9F%94%97-1f2937)](https://langchain-ai.github.io/langgraph/)
 [![FastAPI](https://img.shields.io/badge/fastapi-0.137%2B-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![Playwright](https://img.shields.io/badge/playwright-%E2%80%93-2e8533?logo=playwright&logoColor=white)](https://playwright.dev)
 [![Docker](https://img.shields.io/badge/docker-%E2%80%93-2496ED?logo=docker&logoColor=white)](https://docker.com)
 
-**Docker-only** · **CLI** · **REST API** · **LangGraph pipeline** · **Playwright web scraping**
+**One container** · **REST API** · **No LLM** · **No database** · **Render-ready**
 
 </div>
 
@@ -18,15 +17,38 @@
 
 ## What It Does
 
-TotemEngine is a self-contained research pipeline that:
+WebHunter is a focused microservice that:
 
-1. **Decomposes** your query into 3-5 focused sub-questions (LLM)
-2. **Searches** the web for each sub-question (DuckDuckGo)
-3. **Crawls** full page content from JS-heavy sites (headless Chromium via Playwright)
-4. **Summarizes** each source (LLM)
-5. **Synthesises** everything into a coherent research report (LLM)
+1. Takes a single research query (plus optional variant suffixes) over HTTP
+2. Runs DuckDuckGo text search across the query and its variants
+3. Crawls the top URLs with headless Chromium (Playwright) — handles JS-heavy sites
+4. Returns a structured JSON payload with every URL found, every page fetched, and the cleaned text content of each page
 
-Everything runs inside a Docker container — no Python, browsers, or dependencies needed on the host.
+That's it. WebHunter knows nothing about LLMs, providers, or orchestration — those responsibilities live in **CompetitorEngine** (orchestrator) and **LLMPing** (LLM provider).
+
+```
+                ┌─────────────────────┐
+                │ CompetitorEngine    │   (orchestrator)
+                └──────────┬──────────┘
+                           │ HTTP /research/sync
+                           ▼
+                ┌─────────────────────┐
+                │     WebHunter       │   ← this service
+                │   (search + crawl)  │
+                └──────────┬──────────┘
+                           │ HTTP /chat
+                           ▼
+                ┌─────────────────────┐
+                │      LLMPing        │   (AI / LLM provider)
+                └─────────────────────┘
+```
+
+**LLMPing** handles all AI / ML tasks — query decomposition, per-page summarization, and final synthesis — over its `/chat` endpoint. WebHunter does not talk to it directly; CompetitorEngine orchestrates the call.
+
+- **LLMPing repo:** [https://github.com/nayaksomkar/LLMPing](https://github.com/nayaksomkar/LLMPing)
+- **LLMPing deployed:** `https://llmping.onrender.com`
+- **WebHunter deployed:** `https://webhunter.onrender.com`
+- **Local dev:** `http://localhost:8000` (this service), `http://localhost:<llmping-port>` for LLMPing when running both locally
 
 ---
 
@@ -35,29 +57,23 @@ Everything runs inside a Docker container — no Python, browsers, or dependenci
 ### Prerequisites
 
 - **Docker** (Engine 24.0+ or Docker Desktop with Compose plugin)
-- API key from [Mistral AI](https://console.mistral.ai/) or [Groq](https://console.groq.com/)
 
-> No Python runtime, virtual environment, or browser installation required on your machine.
+> No Python runtime, Playwright browsers, or Chromium on the host — everything ships inside the image.
 
 ### 1. Clone
 
 ```bash
-git clone https://github.com/nayaksomkar/TotemEngine.git
-cd TotemEngine
+git clone https://github.com/nayaksomkar/WebHunter.git
+cd WebHunter
 ```
 
-### 2. Configure API keys
+### 2. Configure (optional — sensible defaults work)
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` with at least one key:
-
-```bash
-MISTRAL_API_KEY=your-key-here      # or
-GROQ_API_KEY=your-key-here
-```
+The defaults (`PORT=8000`, `MAX_RESULTS=6`, `MAX_PAGES=3`, `PAGE_TIMEOUT_MS=30000`) are picked for typical competitive-research queries. Override anything you need.
 
 ### 3. Build
 
@@ -65,211 +81,9 @@ GROQ_API_KEY=your-key-here
 docker compose build
 ```
 
+This installs Python deps and pre-bakes Chromium (~300MB) into the image.
+
 ### 4. Run
-
-**One-shot research query:**
-
-```bash
-docker compose run --rm cli research "How does quantum computing work?" --model mistral
-```
-
-**Start the API server:**
-
-```bash
-docker compose up server
-```
-
----
-
-## Sample Output
-
-### Query 1: "What are the main health benefits of green tea?" (Groq)
-
-```
-============================================================
-  TotemEngine — AI Research Assistant
-============================================================
-  Query: What are the main health benefits of green tea?
-  Model: Groq (Llama 3.3 70B)
-
-Generated 5 sub-queries
-Found 6 search results
-  Fetched (1/3): https://www.healthline.com/nutrition/top-10-evidence-based-health-benefits-of-green-tea
-  Fetched (2/3): https://pmc.ncbi.nlm.nih.gov/articles/PMC3679539/
-  Fetched (3/3): https://pmc.ncbi.nlm.nih.gov/articles/PMC6412948/
-Collected 3 pages — proceeding to summarize
-Generated 3 summaries
-
-============================================================
-  TOPICS TO RESEARCH
-============================================================
-  1. What are the antioxidant properties of green tea and how do they contribute to overall health?
-  2. How does green tea consumption affect the risk of developing certain types of cancer?
-  3. What is the relationship between green tea consumption and cardiovascular health?
-  4. Can green tea aid in weight loss or improve metabolic function?
-  5. Are there any potential benefits of green tea for brain health?
-
-============================================================
-  SOURCES ANALYZED
-============================================================
-  1. https://www.healthline.com/nutrition/top-10-evidence-based-health-benefits-of-green-tea
-  2. https://pmc.ncbi.nlm.nih.gov/articles/PMC3679539/
-  3. https://pmc.ncbi.nlm.nih.gov/articles/PMC6412948/
-
-============================================================
-  SYNTHESIS
-============================================================
-
-**The Health Benefits of Green Tea: A Comprehensive Review**
-
-### Introduction
-Green tea has been extensively studied for its potential health benefits, and the evidence suggests that it may be a valuable addition to a healthy lifestyle. This report summarizes the main health benefits of green tea, including its antioxidant properties, cognitive function, and potential to reduce the risk of certain diseases.
-
-### Antioxidant Properties and Overall Health
-Green tea contains a range of antioxidants, including epigallocatechin-3-gallate (EGCG) and polyphenols, which have been shown to nullify excess reactive oxygen species (ROS) and reactive nitrogen species (RNS) in the body. These antioxidant properties can help reduce the impact of photoaging and promote overall health. The phytochemicals present in green tea have also been found to increase collagen and elastin fiber content in the skin, suppressing collagen-degrading enzyme production and conferring an anti-wrinkle effect.
-
-### Cognitive Function and Neuroprotection
-Green tea may help protect the brain from aging and support cognitive function. The antioxidants present in green tea, such as EGCG, may help prevent cell damage and provide other health benefits. Additionally, green tea has been reported to have neuroprotective properties, making it a potential agent for mediating neurodegenerative diseases such as Alzheimer's disease.
-
-### Disease Prevention and Management
-Regular consumption of green tea has been linked to a lower risk of cognitive impairment and certain diseases, such as heart disease and type 2 diabetes. Green tea may also help manage blood sugar levels and support oral health. Furthermore, the antioxidants present in green tea may help reduce the risk of certain cancers.
-
-### Conclusion
-In conclusion, the evidence suggests that green tea may have numerous health benefits, including improving cognitive function, aiding in fat burning, and reducing the risk of certain diseases. The antioxidant properties of green tea, particularly its polyphenols and EGCG, make it a potent agent for promoting overall health and well-being.
-```
-
----
-
-### Query 2: "How does a lithium-ion battery work?" (Mistral)
-
-```
-============================================================
-  TotemEngine — AI Research Assistant
-============================================================
-  Query: How does a lithium-ion battery work?
-  Model: Mistral AI
-
-Generated 5 sub-queries
-Found 6 search results
-  Fetched (1/3): https://en.wikipedia.org/wiki/Lithium-ion_battery
-  Fetched (2/3): https://www.flashbattery.tech/en/blog/types-of-lithium-batteries-which-chemistry-use/
-  Fetched (3/3): https://en.wikipedia.org/wiki/Lithium-ion_battery
-Collected 3 pages — proceeding to summarize
-Generated 3 summaries
-
-============================================================
-  TOPICS TO RESEARCH
-============================================================
-  1. What is the basic chemical composition and structure of a lithium-ion battery?
-  2. How do the charging and discharging processes occur in a lithium-ion battery at the electrochemical level?
-  3. What roles do the anode, cathode, and electrolyte play in the operation of a lithium-ion battery?
-  4. What are the key chemical reactions that take place during the operation of a lithium-ion battery?
-  5. How do lithium ions move between the anode and cathode during charging and discharging cycles?
-
-============================================================
-  SOURCES ANALYZED
-============================================================
-  1. https://en.wikipedia.org/wiki/Lithium-ion_battery
-  2. https://www.flashbattery.tech/en/blog/types-of-lithium-batteries-which-chemistry-use/
-  3. https://en.wikipedia.org/wiki/Lithium-ion_battery
-
-============================================================
-  SYNTHESIS
-============================================================
-
-# **Lithium-Ion Batteries: Mechanisms, Chemistries, and Applications**
-
-## **1. Introduction**
-Lithium-ion (Li-ion) batteries are rechargeable energy storage systems that have transformed modern technology due to their high energy density, efficiency, and long cycle life. They power a wide range of applications, from portable electronics to electric vehicles (EVs) and grid storage. This report synthesizes key findings on how Li-ion batteries function, their chemical variations, and their advantages and limitations.
-
-## **2. Operating Principles of Lithium-Ion Batteries**
-
-### **2.1 Basic Mechanism**
-Li-ion batteries store and release energy through the reversible movement of lithium ions (Li⁺) between two electrodes:
-- **Anode (Negative Electrode):** Typically made of graphite or other carbon-based materials, which can intercalate (absorb) lithium ions during charging.
-- **Cathode (Positive Electrode):** Usually composed of lithium metal oxides (e.g., lithium cobalt oxide, LiCoO₂) or other lithium-based compounds that can reversibly host lithium ions.
-- **Electrolyte:** A lithium salt dissolved in an organic solvent, facilitating ion transport between the electrodes while preventing electron flow.
-
-During **discharge**, lithium ions move from the anode to the cathode through the electrolyte, while electrons flow through an external circuit, generating electrical energy. During **charging**, an external voltage reverses this process, driving lithium ions back into the anode.
-
-### **2.2 Key Performance Metrics**
-- **Specific Energy:** 160–450 Wh/kg
-- **Energy Density:** 250–1,100 Wh/L
-- **Efficiency:** 80–90%
-- **Nominal Cell Voltage:** 3.6–3.85 V
-- **Cycle Life:** 400–1,200 full charge-discharge cycles
-
-## **3. Chemical Variations in Lithium-Ion Batteries**
-
-| Chemistry | Cathode Material | Key Characteristics | Primary Applications |
-|-----------|-----------------|---------------------|----------------------|
-| **LCO** | LiCoO₂ | High energy density, safety risks | Smartphones, laptops |
-| **LMO** | LiMn₂O₄ | High power output, good thermal stability | Power tools, e-bikes |
-| **LFP** | LiFePO₄ | Excellent safety, long cycle life | EVs, grid storage |
-| **NMC** | LiNiMnCoO₂ | Balanced performance | EVs, energy storage |
-| **NCA** | LiNiCoAlO₂ | High energy density | EVs (e.g., Tesla) |
-| **LTO** | Li₄Ti₅O₁₂ | Ultra-fast charging, long lifespan | High-power applications |
-
-## **4. Historical Development**
-- **M. Stanley Whittingham (1970s):** Developed first functional lithium battery
-- **John Goodenough (1980):** Introduced LiCoO₂ cathode
-- **Akira Yoshino (1985):** Carbon-based anode, first commercial Li-ion battery (Sony, 1991)
-These advancements earned the **2019 Nobel Prize in Chemistry**.
-
-## **5. Advantages and Limitations**
-
-### Advantages
-- High energy density vs. older technologies
-- Long cycle life (hundreds to thousands of cycles)
-- Low self-discharge (~1.5–2%/month)
-- No memory effect
-- Versatile chemistries for different applications
-
-### Limitations
-- Safety risks (flammable electrolytes, thermal runaway)
-- Degradation over time (capacity fade)
-- Cost (cobalt, nickel dependency)
-- Environmental impact of lithium/cobalt mining
-
-## **6. Applications**
-- **Consumer Electronics:** Smartphones, laptops (LCO, NMC)
-- **Electric Vehicles:** Passenger cars, buses (NMC, NCA, LFP)
-- **Energy Storage:** Grid storage, solar/wind (LFP, NMC, LTO)
-- **Industrial Equipment:** Forklifts, robotics (LFP, LMO)
-- **Medical Devices:** Pacemakers, diagnostics (LMO, LCO)
-- **Aerospace:** Satellites, drones (NCA, NMC)
-
-## **7. Future Directions**
-- Solid-state batteries (safer, higher energy density)
-- Silicon anodes (higher capacity)
-- Sustainable materials (reduce cobalt reliance)
-- Fast charging improvements
-- Recycling advancements
-
-## **8. Conclusion**
-Li-ion batteries are a cornerstone of modern energy storage. Their operation relies on reversible lithium-ion intercalation between carbon-based anodes and lithium metal oxide cathodes. While challenges persist, ongoing innovations promise enhanced capabilities and sustainability.
-```
-
----
-
-## Usage
-
-### CLI (Docker)
-
-```bash
-# Research a query
-docker compose run --rm cli research "Your question" --model mistral
-
-# Use Groq instead
-docker compose run --rm cli research "Your question" --model groq
-
-# List available models
-docker compose run --rm cli models
-```
-
-### REST API (Docker)
-
-Start server:
 
 ```bash
 docker compose up server
@@ -279,47 +93,164 @@ Health check:
 
 ```bash
 curl http://localhost:8000/health
-```
-
-Sync research (blocks until done):
-
-```bash
-curl -X POST http://localhost:8000/research/sync \
-  -H "Content-Type: application/json" \
-  -d '{"query": "Your question", "model": "mistral"}'
-```
-
-Async research (returns task ID, poll for result):
-
-```bash
-curl -X POST http://localhost:8000/research \
-  -H "Content-Type: application/json" \
-  -d '{"query": "Your question"}'
+# → {"status":"ok"}
 ```
 
 ---
 
-## What's in the Image
+## Sample Request / Response
 
-The Docker image (`python:3.12-slim` base) packages:
+### `POST /research/sync`
 
-- Python runtime + all dependencies (`langchain`, `langgraph`, `playwright`, `fastapi`, etc.)
-- Chromium browser binary (`playwright install chromium` at build time)
-- System libraries required by Chromium
+**Request:**
 
-You only need Docker on the host. Nothing else.
+```bash
+curl -X POST http://localhost:8000/research/sync \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "electric vehicle market leaders 2025",
+    "max_pages": 3,
+    "variants": ["pricing", "competitors"]
+  }'
+```
+
+**Response (200):**
+
+```json
+{
+  "status": "completed",
+  "query": "electric vehicle market leaders 2025",
+  "search_queries": [
+    "electric vehicle market leaders 2025",
+    "electric vehicle market leaders 2025 pricing",
+    "electric vehicle market leaders 2025 competitors"
+  ],
+  "search_results": [
+    {
+      "sub_query": "electric vehicle market leaders 2025 pricing",
+      "url": "https://www.statista.com/...",
+      "title": "Top 10 EV makers by market share — Statista",
+      "snippet": "Tesla led the global EV market in Q1 2025..."
+    }
+  ],
+  "crawled_contents": [
+    {
+      "url": "https://www.statista.com/...",
+      "sub_query": "electric vehicle market leaders 2025 pricing",
+      "title": "Top 10 EV makers by market share",
+      "content": "...plain text, up to CONTENT_MAX_CHARS..."
+    }
+  ],
+  "stats": {
+    "search_results_count": 7,
+    "crawled_pages_count": 3,
+    "elapsed_ms": 48211
+  },
+  "errors": []
+}
+```
+
+See [docs/API.md](docs/API.md) for the complete contract and error shapes.
+
+---
+
+## Endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/health` | Health check (Render pings this) |
+| `POST` | `/research/sync` | Run search + crawl synchronously (blocks 15–90s) |
+| `POST` | `/research` | Start async research; returns `task_id` |
+| `GET` | `/research/{task_id}` | Poll async task result |
 
 ---
 
 ## Environment Variables
 
-Set in `.env` at the project root:
-
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `MISTRAL_API_KEY` | For `mistral` model | — | Mistral AI API key |
-| `GROQ_API_KEY` | For `groq` model | — | Groq API key |
-| `LOG_LEVEL` | No | `INFO` | Logging verbosity |
+| `PORT` | No | `8000` | Server bind port. Render sets this automatically. |
+| `HOST` | No | `0.0.0.0` | Server bind host. |
+| `LOG_LEVEL` | No | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `MAX_RESULTS` | No | `6` | Max URLs collected across all search queries. |
+| `MAX_PAGES` | No | `3` | Max pages actually crawled per request. |
+| `PAGE_TIMEOUT_MS` | No | `30000` | Per-page Playwright navigation timeout. |
+| `CONTENT_MAX_CHARS` | No | `8000` | Cap on extracted text per page. |
+| `SEARCH_VARIANTS` | No | _empty_ | Comma-separated extra query suffixes applied to every request unless overridden by the caller's `variants` field. |
+
+> **No LLM keys needed.** WebHunter never talks to an LLM directly.
+
+---
+
+## Deployment
+
+### Local Docker
+
+```bash
+docker compose build
+docker compose up server
+# → listening on http://localhost:8000
+```
+
+### Plain Docker
+
+```bash
+docker build -t webhunter .
+docker run --rm -p 8000:8000 -e PORT=8000 webhunter
+```
+
+### Render
+
+1. Push this repo to GitHub/GitLab.
+2. On Render, click **New → Web Service → Docker**.
+3. Render auto-detects the `Dockerfile`. Override as needed:
+   - **Health Check Path:** `/health`
+   - **Port:** Render sets `$PORT` automatically; `webhunter` reads it.
+   - **Environment:** none required (no API keys).
+4. First deploy takes ~2–3 minutes (Chromium download). Subsequent deploys are fast thanks to layer caching.
+
+After deploy:
+
+```bash
+curl https://<your-service>.onrender.com/health
+# → {"status":"ok"}
+```
+
+### Calling WebHunter From Another Microservice
+
+```python
+import httpx
+
+resp = httpx.post(
+    "https://<your-service>.onrender.com/research/sync",
+    json={
+        "query": "lithium-ion battery manufacturers",
+        "max_pages": 3,
+        "variants": ["pricing", "market share"],
+    },
+    timeout=180.0,
+)
+data = resp.json()
+for page in data["crawled_contents"]:
+    print(page["url"], page["content"][:200])
+```
+
+The caller (e.g. CompetitorEngine) decides what to do with the returned text — summarize via LLMPing, embed, store, etc.
+
+---
+
+## What's Inside the Image
+
+Base `python:3.12-slim` plus:
+
+| Layer | Details |
+|-------|---------|
+| System deps | `wget`, `ca-certificates` (required by Chromium) |
+| Python deps | `fastapi`, `uvicorn`, `pydantic`, `ddgs`, `playwright`, `python-dotenv` |
+| Browser | Chromium pre-installed via `playwright install chromium` |
+| Entrypoint | `python main.py server` |
+
+No LangChain, no LangGraph, no model provider SDKs, no databases, no Redis — by design.
 
 ---
 
@@ -327,38 +258,29 @@ Set in `.env` at the project root:
 
 | File | Description |
 |------|-------------|
-| [DOCKER.md](docs/DOCKER.md) | Full Docker deployment guide, troubleshooting |
-| [CONFIGURATION.md](docs/CONFIGURATION.md) | Environment variables, model config, pipeline settings |
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Pipeline structure, data flow, runtime details |
-| [API.md](docs/API.md) | REST API endpoint reference |
-| [CONTRIBUTING.md](docs/CONTRIBUTING.md) | Local development setup (non-Docker) |
+| [docs/API.md](docs/API.md) | Full REST API reference with request/response examples |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Pipeline internals, data flow, file tree |
+| [docs/DOCKER.md](docs/DOCKER.md) | Docker & Render deployment guide |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Environment variables reference |
+| [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | Local (non-Docker) development setup |
 
 ---
 
-## Supported Models
+## Out of Scope
 
-| Name | Provider | Default Model | Key Required |
-|------|----------|---------------|--------------|
-| `mistral` | [Mistral AI](https://mistral.ai) | `mistral-large-latest` | `MISTRAL_API_KEY` |
-| `groq` | [Groq](https://groq.com) | `llama-3.3-70b-versatile` | `GROQ_API_KEY` |
+WebHunter deliberately does **not**:
 
----
-
-## Contributing
-
-See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for local development setup.
-
-1. Fork → `git checkout -b feature/my-feature`
-2. `git commit -am 'Add feature'`
-3. `git push origin feature/my-feature`
-4. Open a Pull Request
+- Call any LLM (no Mistral, no Groq, no ChatCompletion APIs)
+- Store data between requests (no DB, no Redis)
+- Orchestrate multi-service workflows (that's CompetitorEngine)
+- Authenticate callers (assumed private network; add `Authorization` if exposing publicly)
 
 ---
 
 <div align="center">
   <sub>
-    Built with LangChain, LangGraph, FastAPI, and Playwright.
+    Built with FastAPI, DuckDuckGo, and Playwright.
     ·
-    <a href="https://github.com/nayaksomkar/TotemEngine">GitHub</a>
+    <a href="https://github.com/nayaksomkar/WebHunter">GitHub</a>
   </sub>
 </div>

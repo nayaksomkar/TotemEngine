@@ -1,41 +1,34 @@
 # ---------------------------------------------------------------------------
-# FastAPI Server — REST API for the research pipeline.
+# WebHunter FastAPI Server
+#
+# HTTP API exposing the search + crawl pipeline. No LLM, no orchestration —
+# call the pipeline directly and return structured JSON.
 #
 # Endpoints:
-#   GET  /health              Health check
-#   GET  /models              List available LLM providers
+#   GET  /health              Health check (for Render)
+#   POST /research/sync       Run research synchronously (blocks)
 #   POST /research            Start async research (returns task_id)
 #   GET  /research/{id}       Poll async task result
-#   POST /research/sync       Run research synchronously (blocking)
-#   POST /research/stream     Run research with SSE progress events
 # ---------------------------------------------------------------------------
 
-import json
 import logging
 import uuid
 from threading import Thread
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from totem.graph import run_research, run_research_stream
-from totem.config import SUPPORTED_MODELS
+from totem.pipeline import run_research, shutdown as shutdown_pipeline
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# FastAPI application setup
-# ---------------------------------------------------------------------------
-
 app = FastAPI(
-    title="TotemEngine Research API",
-    description="AI-powered research assistant using LangGraph + Playwright",
-    version="0.2.0",
+    title="WebHunter API",
+    description="Web search + page crawling microservice (DuckDuckGo + Playwright)",
+    version="1.0.0",
 )
 
-# Allow all origins for local development
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -44,22 +37,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory store for async task results (simple dict — replace with DB for production)
+# In-memory async task store. Replace with a real backend for production.
 tasks: dict[str, dict] = {}
 
+
 # ---------------------------------------------------------------------------
-# Pydantic request / response models
+# Request / response models
 # ---------------------------------------------------------------------------
 
 
 class ResearchRequest(BaseModel):
-    query: str                     # The research question
-    model: str = "mistral"         # LLM provider name
+    query: str = Field(..., min_length=1, description="Research question / topic")
+    max_results: int | None = Field(None, ge=1, le=50, description="Max URLs to collect from search")
+    max_pages: int | None = Field(None, ge=1, le=20, description="Max pages to actually crawl")
+    variants: list[str] | None = Field(None, description="Extra suffixes for search breadth")
+    region: str | None = Field(None, description="DuckDuckGo region code (e.g. 'us-en', 'wt-wt')")
+    timeout_ms: int | None = Field(None, ge=1000, le=180000, description="Per-page Playwright timeout")
 
 
-class ResearchResponse(BaseModel):
-    task_id: str                   # Unique ID for polling
-    status: str                    # "running" | "completed" | "failed"
+class AsyncStartResponse(BaseModel):
+    task_id: str
+    status: str
 
 
 # ---------------------------------------------------------------------------
@@ -69,140 +67,69 @@ class ResearchResponse(BaseModel):
 
 @app.get("/health")
 def health():
-    """Simple health check — returns OK if the server is running."""
     return {"status": "ok"}
 
 
-@app.get("/models")
-def list_models():
-    """Return a map of available model names to display labels."""
-    return {
-        name: info["display"]
-        for name, info in SUPPORTED_MODELS.items()
-    }
+def _build_options(req: ResearchRequest) -> dict:
+    opts: dict = {}
+    if req.max_results is not None:
+        opts["max_results"] = req.max_results
+    if req.max_pages is not None:
+        opts["max_pages"] = req.max_pages
+    if req.variants is not None:
+        opts["variants"] = req.variants
+    if req.region is not None:
+        opts["region"] = req.region
+    if req.timeout_ms is not None:
+        opts["timeout_ms"] = req.timeout_ms
+    return opts
 
 
-@app.post("/research", response_model=ResearchResponse)
+@app.post("/research/sync")
+def research_sync(req: ResearchRequest):
+    """
+    Run research synchronously. Blocks until the pipeline completes
+    (typically 15-90s depending on crawl count and page weight).
+    """
+    try:
+        result = run_research(req.query, _build_options(req))
+        return result
+    except Exception as e:
+        logger.exception("Sync research failed")
+        raise HTTPException(500, str(e))
+
+
+@app.post("/research", response_model=AsyncStartResponse)
 def start_research(req: ResearchRequest):
     """
-    Start an asynchronous research task.
-
-    The task runs in a background thread.  Poll GET /research/{task_id}
-    for the result.
+    Start an asynchronous research task. Returns immediately with a task_id;
+    poll `GET /research/{task_id}` for the result.
     """
     task_id = str(uuid.uuid4())
-    tasks[task_id] = {
-        "status": "running",
-        "query": req.query,
-        "model": req.model,
-    }
+    opts = _build_options(req)
+    tasks[task_id] = {"status": "running", "query": req.query}
 
     def _run():
-        """Background thread that executes the LangGraph pipeline."""
         try:
-            result = run_research(req.query, req.model)
-            tasks[task_id].update({
-                "status": "completed",
-                "result": result,
-            })
+            result = run_research(req.query, opts)
+            tasks[task_id].update({"status": result.get("status", "completed"), "result": result})
         except Exception as e:
-            logger.exception(f"Task {task_id} failed")
+            logger.exception(f"Async task {task_id} failed")
             tasks[task_id].update({"status": "failed", "error": str(e)})
 
     Thread(target=_run, daemon=True).start()
-    return ResearchResponse(task_id=task_id, status="running")
+    return AsyncStartResponse(task_id=task_id, status="running")
 
 
 @app.get("/research/{task_id}")
 def get_research(task_id: str):
-    """
-    Poll the result of an async research task.
-
-    Returns 404 if the task_id doesn't exist.
-    """
+    """Poll the result of an async research task."""
     task = tasks.get(task_id)
     if not task:
         raise HTTPException(404, "Task not found")
     return task
 
 
-@app.post("/research/sync")
-def research_sync(req: ResearchRequest):
-    """
-    Run research synchronously and return the full result.
-
-    This blocks until the pipeline completes (may take 30-120 seconds).
-    """
-    try:
-        result = run_research(req.query, req.model)
-        return {
-            "status": "completed",
-            "query": result["query"],
-            "sub_queries": result["sub_queries"],
-            "summaries": result["summaries"],
-            "final_summary": result["final_summary"],
-            "model_choice": result["model_choice"],
-            "sources": [
-                {"title": r["title"], "url": r["url"]}
-                for r in result.get("search_results", [])
-            ],
-        }
-    except Exception as e:
-        logger.exception("Sync research failed")
-        raise HTTPException(500, str(e))
-
-
-NODE_LABELS = {
-    "decompose": "Breaking down your question into research topics...",
-    "search": "Searching the web for relevant sources...",
-    "crawl": "Fetching page content from sources...",
-    "summarize": "Summarizing each source...",
-    "merge": "Synthesizing the final research report...",
-    "result": "Research complete!",
-}
-
-
-@app.post("/research/stream")
-def research_stream(req: ResearchRequest):
-    """
-    Run research and stream progress events via Server-Sent Events (SSE).
-
-    Each event is a JSON string following the ``data:`` SSE format:
-      - ``{"type":"progress","node":"decompose","message":"..."}``
-      - ``{"type":"result","status":"completed",...}``
-      - ``{"type":"error","message":"..."}``
-    """
-
-    def event_stream():
-        try:
-            for node_name, state in run_research_stream(req.query, req.model):
-                if node_name == "result":
-                    result = {
-                        "type": "result",
-                        "status": "completed",
-                        "query": state["query"],
-                        "sub_queries": state["sub_queries"],
-                        "summaries": state["summaries"],
-                        "final_summary": state["final_summary"],
-                        "model_choice": state["model_choice"],
-                        "sources": [
-                            {"title": r["title"], "url": r["url"]}
-                            for r in state.get("search_results", [])
-                        ],
-                    }
-                    yield f"data: {json.dumps(result)}\n\n"
-                else:
-                    progress = {
-                        "type": "progress",
-                        "node": node_name,
-                        "message": NODE_LABELS.get(
-                            node_name, f"Running {node_name}..."
-                        ),
-                    }
-                    yield f"data: {json.dumps(progress)}\n\n"
-        except Exception as e:
-            logger.exception("Stream research failed")
-            error = {"type": "error", "message": str(e)}
-            yield f"data: {json.dumps(error)}\n\n"
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+@app.on_event("shutdown")
+def _on_shutdown():
+    shutdown_pipeline()

@@ -1,18 +1,19 @@
 services:
-  totem:
-    build: .
-    image: totemengine
-    environment:
-      - MISTRAL_API_KEY=${MISTRAL_API_KEY}
-      - GROQ_API_KEY=${GROQ_API_KEY}
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-
   server:
-    image: totemengine
+    build: .
+    image: webhunter
     ports:
-      - "8000:8000"
+      - "8000:${PORT:-8000}"
     environment:
-      - MISTRAL_API_KEY=${MISTRAL_API_KEY}
-      - GROQ_API_KEY=${GROQ_API_KEY}
+      - PORT=${PORT:-8000}
+      - HOST=${HOST:-0.0.0.0}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-    command: ["server", "--host", "0.0.0.0", "--port", "8000"]
+      - MAX_RESULTS=${MAX_RESULTS:-6}
+      - MAX_PAGES=${MAX_PAGES:-3}
+      - PAGE_TIMEOUT_MS=${PAGE_TIMEOUT_MS:-30000}
+      - CONTENT_MAX_CHARS=${CONTENT_MAX_CHARS:-8000}
+      - SEARCH_VARIANTS=${SEARCH_VARIANTS:-}
+      - LLMPING_URL=${LLMPING_URL:-https://llmping.onrender.com}
+      - COMPETITOR_ENGINE_URL=${COMPETITOR_ENGINE_URL:-https://competitorengine.onrender.com}
+      - RENDER_EXTERNAL_URL=${RENDER_EXTERNAL_URL:-}
+    command: ["server"]

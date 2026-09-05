@@ -1,86 +1,78 @@
 # Configuration
 
-All configuration is via environment variables loaded from a `.env` file at the project root. When running with Docker Compose, this happens automatically.
+All WebHunter configuration is via environment variables, loaded from a `.env` file at the project root. Docker Compose reads this file automatically.
+
+> WebHunter has **no LLM provider keys**. There is nothing secret to manage.
+
+---
 
 ## Environment Variables
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `MISTRAL_API_KEY` | For `mistral` model | — | Mistral AI API key. Get one at [console.mistral.ai](https://console.mistral.ai/) |
-| `GROQ_API_KEY` | For `groq` model | — | Groq API key. Get one at [console.groq.com](https://console.groq.com/) |
-| `LOG_LEVEL` | No | `INFO` | Logging verbosity. Options: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `PORT` | No | `8000` | Server bind port. Render sets this automatically. |
+| `HOST` | No | `0.0.0.0` | Server bind host. |
+| `LOG_LEVEL` | No | `INFO` | Logging verbosity. `DEBUG`, `INFO`, `WARNING`, `ERROR`. |
+| `MAX_RESULTS` | No | `6` | Max URLs collected across all search queries for a single research request. |
+| `MAX_PAGES` | No | `3` | Max pages actually fetched (crawled) per research request. |
+| `PAGE_TIMEOUT_MS` | No | `30000` | Per-page Playwright navigation timeout in milliseconds. |
+| `CONTENT_MAX_CHARS` | No | `8000` | Cap on extracted text per page, in characters. |
+| `SEARCH_VARIANTS` | No | _empty_ | Comma-separated extra query suffixes applied to every request unless overridden by the caller. |
 
-> **At least one** of `MISTRAL_API_KEY` or `GROQ_API_KEY` must be set.
+### Tuning guidelines
+
+| Scenario | Suggested values |
+|----------|------------------|
+| Quick market scan | `MAX_PAGES=2`, `MAX_RESULTS=4` |
+| Deep competitor analysis | `MAX_PAGES=5`, `MAX_RESULTS=10`, `PAGE_TIMEOUT_MS=60000` |
+| Cheap health probes | `MAX_PAGES=1`, `MAX_RESULTS=2` |
+
+---
 
 ## Setting Up `.env`
 
 ### Docker (recommended)
 
 ```bash
-# From the project root
 cp .env.example .env
-# Edit .env with your keys
-nano .env                   # or use any editor
+nano .env  # edit values
 ```
 
 Docker Compose reads `.env` automatically on `build` and `up`.
 
 ### Non-Docker (development only)
 
-The same `.env` file is loaded by Python-dotenv in [`totem/config.py`](../totem/config.py).
+The same `.env` file is loaded by `python-dotenv` in [`totem/config.py`](../totem/config.py).
 
-## Model Configuration
+---
 
-Models are defined in [`totem/config.py`](../totem/config.py):
+## Request-Level Overrides
 
-```python
-SUPPORTED_MODELS = {
-    "mistral": {
-        "display": "Mistral AI",
-        "provider": "mistral",
-        "default_model": "mistral-large-latest",
-        "env_key": "MISTRAL_API_KEY",
-    },
-    "groq": {
-        "display": "Groq (Llama 3.3 70B)",
-        "provider": "groq",
-        "default_model": "llama-3.3-70b-versatile",
-        "env_key": "GROQ_API_KEY",
-    },
+Every variable above (except `HOST`, `LOG_LEVEL`) can be overridden **per request** via the JSON body of `/research/sync` or `/research`:
+
+```json
+{
+  "query": "AI chip manufacturers",
+  "max_results": 8,
+  "max_pages": 4,
+  "variants": ["pricing", "suppliers"],
+  "region": "us-en",
+  "timeout_ms": 45000
 }
 ```
 
-### Changing Models
+| Request field | Overrides |
+|---------------|-----------|
+| `max_results` | `MAX_RESULTS` |
+| `max_pages` | `MAX_PAGES` |
+| `variants` | `SEARCH_VARIANTS` (per-call list, not merged) |
+| `region` | n/a (request-only — DuckDuckGo region code) |
+| `timeout_ms` | `PAGE_TIMEOUT_MS` |
 
-Edit the `SUPPORTED_MODELS` dict. Each entry requires:
-- `display` — human-readable name
-- `provider` — LLM provider tag used in [`totem/llm.py`](../totem/llm.py)
-- `default_model` — the model ID sent to the provider
-- `env_key` — the environment variable holding the API key
-
-## Pipeline Configuration
-
-Hardcoded in [`totem/crawl_client.py`](../totem/crawl_client.py) and [`totem/graph.py`](../totem/graph.py):
-
-| Setting | Value | Where to change |
-|---------|-------|-----------------|
-| Pages crawled per query | 3 | `crawl_client.py` — `target` parameter |
-| Content limit per page | 8000 chars | `crawl_client.py` — slice in results |
-| Page timeout | 30 seconds | `crawl_client.py` — `timeout` |
-| Wait strategy | `domcontentloaded` | `crawl_client.py` — `wait_until` |
-| Sub-queries generated | 3–5 | Controlled by LLM in `nodes.py` |
-
-## Docker Compose Overrides
-
-Edit [`docker-compose.yml`](../docker-compose.yml) to change:
-
-- Image name
-- Port mappings
-- Environment variable defaults
-- Server command arguments (host, port)
+---
 
 ## Related
 
-- [DOCKER.md](DOCKER.md) — Running the project
-- [ARCHITECTURE.md](ARCHITECTURE.md) — Pipeline structure
+- [API.md](API.md) — Request/response shapes
+- [DOCKER.md](DOCKER.md) — Docker & Render deployment
 - [.env.example](../.env.example) — Template file

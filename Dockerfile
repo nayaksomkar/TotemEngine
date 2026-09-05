@@ -1,39 +1,43 @@
 # ---------------------------------------------------------------------------
-# TotemEngine — Docker image
+# WebHunter — Docker image
 #
-# Uses a slim Python base, installs Playwright + Chromium.
-# No browsers needed on the host — everything runs in the container.
+# Self-contained: Python + Playwright + Chromium. No external services
+# required. Designed to run on Render (CMD ["server"] lets Render control
+# the entrypoint).
 #
 # Build:
-#   docker build -t totemengine .
+#   docker build -t webhunter .
 #
-# CLI:
-#   docker run --rm -e MISTRAL_API_KEY=xxx totemengine research "your query"
+# Run locally:
+#   docker run --rm -p 8000:8000 -e PORT=8000 webhunter
 #
-# Server:
-#   docker run --rm -p 8000:8000 -e MISTRAL_API_KEY=xxx totemengine server
+# Render:
+#   PORT=10000 (set automatically), health check at GET /health
 # ---------------------------------------------------------------------------
 
 FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install system deps required by Chromium
+# System deps required by Chromium
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy dependency specs first (for Docker layer caching)
+# Dependency specs first for layer caching
 COPY pyproject.toml requirements.txt ./
 
-# Install Python dependencies
 RUN pip install --no-cache-dir -e .
 
-# Copy the rest of the application
+# App source
 COPY . .
 
-# Install Playwright browsers (Chromium)
+# Pre-bake Chromium into the image (one-time ~300MB download)
 RUN python -m playwright install chromium
 
-# Default command (shows help)
-ENTRYPOINT ["python", "main.py"]
+# Expose the configured port (Render overrides with $PORT)
+EXPOSE 8000
+
+# Default command starts the server. Render's $PORT is honored by cli.py
+# via totem.config.PORT.
+CMD ["server"]

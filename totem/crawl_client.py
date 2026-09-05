@@ -1,7 +1,16 @@
+# ---------------------------------------------------------------------------
+# WebHunter Crawl Client
+#
+# Singleton headless Chromium browser (Playwright). Used by pipeline.py
+# to fetch full page content from JS-heavy sites.
+# ---------------------------------------------------------------------------
+
 import asyncio
 import logging
 import re
 import threading
+
+from totem.config import PAGE_TIMEOUT_MS, CONTENT_MAX_CHARS
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +39,12 @@ def _clean_text(html: str) -> str:
     html = re.sub(r"<style[^>]*>.*?</style>", "", html, flags=re.DOTALL)
     text = re.sub(r"<[^>]+>", " ", html)
     text = re.sub(r"\s+", " ", text).strip()
-    return text[:8000]
+    return text[:CONTENT_MAX_CHARS]
 
 
-async def _crawl(urls: list[str], target: int = 3) -> list[dict]:
+async def _crawl(urls: list[str], target: int = 3, timeout_ms: int = PAGE_TIMEOUT_MS) -> list[dict]:
     browser = await _get_browser()
-    results = []
+    results: list[dict] = []
 
     for url in urls:
         if len(results) >= target:
@@ -43,7 +52,7 @@ async def _crawl(urls: list[str], target: int = 3) -> list[dict]:
         page = None
         try:
             page = await browser.new_page()
-            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
             html = await page.content()
             text = _clean_text(html)
             if text:
@@ -58,8 +67,9 @@ async def _crawl(urls: list[str], target: int = 3) -> list[dict]:
     return results
 
 
-def crawl(urls: list[str], target: int = 3) -> list[dict]:
-    return _run_async(_crawl(urls, target=target))
+def crawl(urls: list[str], target: int = 3, timeout_ms: int = PAGE_TIMEOUT_MS) -> list[dict]:
+    """Synchronous wrapper used by the pipeline."""
+    return _run_async(_crawl(urls, target=target, timeout_ms=timeout_ms))
 
 
 async def _close():

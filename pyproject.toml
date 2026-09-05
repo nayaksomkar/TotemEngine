@@ -1,28 +1,24 @@
 [project]
-name = "totemengine"
-version = "0.2.0"
-description = "AI-powered research assistant — decompose, search, crawl, summarize, synthesize"
+name = "webhunter"
+version = "1.0.0"
+description = "WebHunter — standalone web search + crawling microservice (ddgs + Playwright)"
 readme = "README.md"
 requires-python = ">=3.11.9"
 license = { text = "MIT" }
-keywords = ["langchain", "langgraph", "research", "ai", "web-scraping", "mistral", "groq"]
+keywords = ["web-search", "web-scraping", "playwright", "duckduckgo", "microservice", "fastapi"]
 dependencies = [
-    "langchain>=0.3.0",
-    "langchain-core>=0.3.0",
-    "langgraph>=0.3.0",
-    "langchain-mistralai>=0.2.0",
-    "langchain-groq>=0.2.0",
-    "ddgs>=9.5.4",
-    "playwright>=1.50.0",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.0.0",
     "python-dotenv>=1.0.0",
+    "ddgs>=9.5.4",
+    "playwright>=1.50.0",
 ]
 
 [project.urls]
-Homepage = "https://github.com/nayaksomkar/TotemEngine"
-Repository = "https://github.com/nayaksomkar/TotemEngine"
-Documentation = "https://github.com/nayaksomkar/TotemEngine#readme"
+Homepage = "https://github.com/nayaksomkar/WebHunter"
+Repository = "https://github.com/nayaksomkar/WebHunter"
+Documentation = "https://github.com/nayaksomkar/WebHunter#readme"
 
 [project.scripts]
-totem = "totem.cli:main"
+webhunter = "totem.cli:main"

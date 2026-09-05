@@ -1,6 +1,6 @@
 # Contributing
 
-Development setup is **optional** — TotemEngine is designed to run entirely inside Docker.  
+Development setup is **optional** — WebHunter is designed to run entirely inside Docker.  
 This guide is for contributors who want to edit the code and test locally without rebuilding the image every time.
 
 > For end-user Docker deployment, see [DOCKER.md](DOCKER.md).
@@ -12,7 +12,8 @@ This guide is for contributors who want to edit the code and test locally withou
 - **Python 3.12+**
 - **Playwright** CLI (`pip install playwright`)
 - **Chromium** browser (`playwright install chromium`)
-- API key from [Mistral AI](https://console.mistral.ai/) or [Groq](https://console.groq.com/)
+
+> **No API keys needed.** WebHunter has no LLM provider integration.
 
 ---
 
@@ -21,8 +22,8 @@ This guide is for contributors who want to edit the code and test locally withou
 ### 1. Clone
 
 ```bash
-git clone https://github.com/nayaksomkar/TotemEngine.git
-cd TotemEngine
+git clone https://github.com/nayaksomkar/WebHunter.git
+cd WebHunter
 ```
 
 ### 2. Create virtual environment
@@ -40,18 +41,20 @@ pip install -e .
 playwright install chromium
 ```
 
-### 4. Configure environment
+### 4. Configure environment (optional)
+
+Defaults are sensible — only override if you need to:
 
 ```bash
 cp .env.example .env
-# Edit .env with your API keys
+nano .env
 ```
 
 ### 5. Run
 
 ```bash
-python main.py research "How does quantum computing work?" --model mistral
 python main.py server --port 8000
+curl http://localhost:8000/health
 ```
 
 ---
@@ -59,20 +62,19 @@ python main.py server --port 8000
 ## Project Structure
 
 ```
-totemengine/
+webhunter/
 ├── main.py              # Entrypoint
 ├── Dockerfile           # Container image
-├── docker-compose.yml   # Compose stacks
+├── docker-compose.yml   # Local stack
 ├── docs/                # Documentation
 ├── totem/
-│   ├── cli.py           # CLI parser
-│   ├── server.py        # FastAPI server
-│   ├── graph.py         # LangGraph workflow
-│   ├── nodes.py         # Pipeline stages
+│   ├── cli.py           # CLI parser (only `server`)
+│   ├── server.py        # FastAPI HTTP layer
+│   ├── pipeline.py      # Search + crawl orchestrator
+│   ├── search_client.py # ddgs wrapper + query expansion
 │   ├── crawl_client.py  # Playwright scraper
-│   ├── llm.py           # LLM factory
-│   ├── config.py        # Env vars + model config
-│   └── models.py        # Shared types
+│   ├── config.py        # Env-driven config (no API keys)
+│   └── models.py        # TypedDicts (SearchResult, ResearchResult, ...)
 └── tests/               # Tests (if added)
 ```
 
@@ -89,17 +91,22 @@ totemengine/
 
 ## Testing
 
-No automated tests yet. To verify changes:
+No automated tests yet. To verify changes manually:
 
 ```bash
-# CLI
-python main.py research "test query" --model mistral
-
 # Server
 python main.py server --port 8000
+
+# Health
+curl http://localhost:8000/health
+
+# Sync research
 curl -X POST http://localhost:8000/research/sync \
   -H "Content-Type: application/json" \
-  -d '{"query": "test", "model": "mistral"}'
+  -d '{"query": "test query", "max_pages": 1}'
+
+# Direct Python invocation of the pipeline
+python -c "from totem.pipeline import run_research; import json; print(json.dumps(run_research('test query', {'max_pages':1}), indent=2, default=str))"
 ```
 
 ---
@@ -110,7 +117,6 @@ Rebuild after code changes:
 
 ```bash
 docker compose build
-docker compose run --rm cli research "test query"
 docker compose up server
 ```
 
@@ -122,17 +128,16 @@ docker compose build --no-cache
 
 ---
 
-## Adding a New Model
+## Adding a New Search Provider
 
-1. Define the provider client in [`totem/llm.py`](../totem/llm.py)
-2. Add an entry to `SUPPORTED_MODELS` in [`totem/config.py`](../totem/config.py)
-3. Update `.env.example` with the new API key field
-4. Document in [CONFIGURATION.md](CONFIGURATION.md)
+1. Implement a function in `totem/search_client.py` that returns `list[SearchResult]` (same TypedDict shape as `ddgs` results).
+2. Add a `provider` field to `ResearchRequest` and dispatch inside `pipeline.run_research()`.
+3. Update `.env.example` and [CONFIGURATION.md](CONFIGURATION.md) if the provider needs new env vars.
 
 ---
 
 ## Related
 
-- [DOCKER.md](DOCKER.md) — Docker deployment
+- [DOCKER.md](DOCKER.md) — Docker & Render deployment
 - [ARCHITECTURE.md](ARCHITECTURE.md) — Pipeline internals
 - [API.md](API.md) — REST API reference
