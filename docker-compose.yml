@@ -3,7 +3,7 @@ services:
     build: .
     image: webhunter
     ports:
-      - "8000:${PORT:-8000}"
+      - "8765:${PORT:-8000}"
     environment:
       - PORT=${PORT:-8000}
       - HOST=${HOST:-0.0.0.0}
@@ -16,4 +16,4 @@ services:
       - LLMPING_URL=${LLMPING_URL:-https://llmping.onrender.com}
       - COMPETITOR_ENGINE_URL=${COMPETITOR_ENGINE_URL:-https://competitorengine.onrender.com}
       - RENDER_EXTERNAL_URL=${RENDER_EXTERNAL_URL:-}
-    command: ["server"]
+    command: ["python", "main.py", "server"]

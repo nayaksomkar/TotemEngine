@@ -19,7 +19,9 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# System deps required by Chromium
+# System deps required by Chromium (libglib, libnss, libnspr, libdbus, etc.)
+# `playwright install-deps` installs exactly the libraries the bundled
+# Chromium build needs, version-matched to the Python package.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget ca-certificates && \
     rm -rf /var/lib/apt/lists/*
@@ -32,12 +34,12 @@ RUN pip install --no-cache-dir -e .
 # App source
 COPY . .
 
-# Pre-bake Chromium into the image (one-time ~300MB download)
-RUN python -m playwright install chromium
+# Pre-bake Chromium + its system libraries into the image
+RUN python -m playwright install --with-deps chromium
 
 # Expose the configured port (Render overrides with $PORT)
 EXPOSE 8000
 
 # Default command starts the server. Render's $PORT is honored by cli.py
 # via totem.config.PORT.
-CMD ["server"]
+CMD ["python", "main.py", "server"]
